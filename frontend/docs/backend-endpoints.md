@@ -8,9 +8,26 @@ Base URL: `http://localhost:4000`
 type ErrorResponse = {
   error: {
     message: string;
+    details?: {
+      unsupportedFields?: string[]; // present when the body has fields the endpoint does not accept
+    };
   };
 };
 ```
+
+## Request Validation
+
+All `POST` and `PATCH` bodies are validated before they reach the handler:
+
+- The body must be a JSON object (`400 Body must be a JSON object.`).
+- Only the documented fields are accepted. Any other field (for example `id`, `createdAt`) is rejected with
+  `400 Body contains unsupported fields.` and the field names in `error.details.unsupportedFields`.
+- String fields are trimmed before they are saved.
+- Malformed JSON returns `400` with the parser message.
+
+Other errors:
+- `404 Route not found: <METHOD> <path>` for unknown routes.
+- `500 Internal server error` for unexpected failures.
 
 ## Task Endpoints
 
@@ -61,9 +78,12 @@ type CreateTaskResponse = {
 ```
 
 Possible errors:
-- `400` when body is not an object.
-- `400` when title is missing/invalid/empty.
-- `400` when completed is not a boolean.
+- `400 Body must be a JSON object.`
+- `400 Body contains unsupported fields.` (any field other than `title`, `completed`)
+- `400 "title" is required.`
+- `400 "title" must be a string.`
+- `400 "title" cannot be empty.` (empty after trim)
+- `400 "completed" must be a boolean.`
 
 ### PATCH /tasks/:id
 
@@ -71,7 +91,7 @@ Update task title or status.
 
 ```ts
 type PatchTaskRequest = {
-  title?: string; // if provided, must be string and long enough after trim
+  title?: string; // if provided, trimmed, non-empty
   completed?: boolean;
 };
 
@@ -80,10 +100,16 @@ type PatchTaskResponse = {
 };
 ```
 
+At least one of `title` or `completed` is required. `updatedAt` is set by the server.
+
 Possible errors:
-- `400` when body is invalid.
-- `400` when no supported fields are provided.
-- `404` when task does not exist.
+- `400 Body must be a JSON object.`
+- `400 Body contains unsupported fields.` (any field other than `title`, `completed`)
+- `400 Provide at least one updatable field.`
+- `400 "title" must be a string.`
+- `400 "title" cannot be empty.`
+- `400 "completed" must be a boolean.`
+- `404 Task not found.`
 
 ### DELETE /tasks/:id
 
@@ -94,9 +120,20 @@ type DeleteTaskResponse = void; // status 204
 ```
 
 Possible errors:
-- `404` when task does not exist.
+- `404 Task not found.`
 
 ## Activity Endpoints
+
+Task changes are logged automatically by the backend. The frontend does not need to call `POST /activity` for them:
+
+| Task change | `action` | `info` |
+|---|---|---|
+| `POST /tasks` | `Task created` | task title |
+| `PATCH /tasks/:id` changing `completed` | `Task completed` / `Task reopened` | task title |
+| `PATCH /tasks/:id` changing `title` | `Task renamed` | `"old" → "new"` |
+| `DELETE /tasks/:id` | `Task deleted` | task title |
+
+A PATCH that changes nothing logs nothing.
 
 ### GET /activity
 
@@ -119,16 +156,24 @@ Create activity log entry.
 
 ```ts
 type CreateActivityRequest = {
-  action?: string;
-  info?: string;
+  action: string; // required, trimmed, non-empty
+  info?: string; // optional, trimmed
 };
 
 type CreateActivityResponse = ActivityLog;
 ```
 
+Possible errors:
+- `400 Body must be a JSON object.`
+- `400 Body contains unsupported fields.` (any field other than `action`, `info`)
+- `400 "action" is required and must be a string.`
+- `400 "action" cannot be empty.`
+- `400 "info" must be a string.`
+
 Notes:
-- `action` and `info` are currently not validated by backend.
 - Response shape for activity endpoints is raw objects/arrays (not wrapped in `data`).
+- New entries get a UUID `id`; older entries may have numeric-string ids.
+- `info` is omitted from the response when it was not sent, so keep `info` (and `action` for old entries) optional in the client type.
 
 ## Reports Endpoints
 
@@ -152,4 +197,5 @@ type GetTasksSummaryResponse = TasksSummary;
 
 Notes:
 - `in-progress` is currently returned as `0` because task data only includes boolean `completed`.
+- `recentActivityCount` is currently the total number of activity entries (no time window is applied).
 - Response shape is raw object.

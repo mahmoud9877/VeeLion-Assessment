@@ -1,107 +1,113 @@
-const path = require('node:path');
-
 const { createId } = require('../../../utils/id');
-const { readJsonArray, writeJsonArray } = require('../../../utils/jsonStore');
 const HttpError = require('../../../utils/httpError');
 
-const TASKS_FILE_PATH = path.join(process.cwd(), 'data', 'tasks.json');
+class TasksService {
+  /**
+   * @param {import('../../../utils/jsonFileStore')} tasksStore
+   * @param {import('../../activities/services/activities.service')} activitiesService
+   */
+  constructor(tasksStore, activitiesService) {
+    this.tasksStore = tasksStore;
+    this.activitiesService = activitiesService;
+  }
 
-function buildTaskRecord(payload) {
-  const now = new Date().toISOString();
+  async getAllTasks() {
+    return this.tasksStore.readAll();
+  }
 
-  return {
-    id: createId(),
-    title: payload.title,
-    completed: payload.completed,
-    createdAt: now,
-    updatedAt: now,
-  };
+  async getTaskById(taskId) {
+    const tasks = await this.tasksStore.readAll();
+    return tasks[TasksService.#findTaskIndex(tasks, taskId)];
+  }
+
+  async createTask(payload) {
+    const newTask = await this.tasksStore.update((tasks) => {
+      const task = TasksService.#buildTaskRecord(payload);
+      tasks.push(task);
+      return task;
+    });
+
+    await this.#logActivities([{ action: 'Task created', info: newTask.title }]);
+    return newTask;
+  }
+
+  async updateTask(taskId, updates) {
+    const { previousTask, updatedTask } = await this.tasksStore.update((tasks) => {
+      const taskIndex = TasksService.#findTaskIndex(tasks, taskId);
+      const previous = tasks[taskIndex];
+      const updated = {
+        ...previous,
+        ...updates,
+        updatedAt: new Date().toISOString(),
+      };
+
+      tasks[taskIndex] = updated;
+      return { previousTask: previous, updatedTask: updated };
+    });
+
+    await this.#logActivities(TasksService.#describeChanges(previousTask, updatedTask));
+    return updatedTask;
+  }
+
+  async deleteTask(taskId) {
+    const removedTask = await this.tasksStore.update((tasks) => {
+      const [task] = tasks.splice(TasksService.#findTaskIndex(tasks, taskId), 1);
+      return task;
+    });
+
+    await this.#logActivities([{ action: 'Task deleted', info: removedTask.title }]);
+    return removedTask;
+  }
+
+  // Activity is a side effect: the task change is already saved, so a logging failure must not fail the request.
+  async #logActivities(entries) {
+    for (const entry of entries) {
+      try {
+        await this.activitiesService.createActivity(entry);
+      } catch (error) {
+        console.error('Failed to log activity:', error);
+      }
+    }
+  }
+
+  static #buildTaskRecord(payload) {
+    const now = new Date().toISOString();
+
+    return {
+      id: createId(),
+      title: payload.title,
+      completed: payload.completed,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  static #findTaskIndex(tasks, taskId) {
+    const taskIndex = tasks.findIndex((item) => item.id === taskId);
+
+    if (taskIndex === -1) {
+      throw new HttpError(404, 'Task not found.');
+    }
+
+    return taskIndex;
+  }
+
+  static #describeChanges(previousTask, updatedTask) {
+    const changes = [];
+
+    if (previousTask.title !== updatedTask.title) {
+      changes.push({ action: 'Task renamed', info: `"${previousTask.title}" → "${updatedTask.title}"` });
+    }
+
+    if (previousTask.completed !== updatedTask.completed) {
+      changes.push({
+        action: updatedTask.completed ? 'Task completed' : 'Task reopened',
+        info: updatedTask.title,
+      });
+    }
+
+    return changes;
+  }
 }
 
-async function getAllTasks() {
-  return readJsonArray(TASKS_FILE_PATH);
-}
-
-async function getTaskById(taskId) {
-  const tasks = await readJsonArray(TASKS_FILE_PATH);
-  const task = tasks.find((item) => item.id === taskId);
-
-  if (!task) {
-    throw new HttpError(404, 'Task not found.');
-  }
-
-  return task;
-}
-
-async function createTask(payload) {
-  if (!payload.title || typeof payload.title !== 'string') {
-    throw new HttpError(400, 'Invalid title.');
-  }
-
-  if (payload.completed !== undefined && typeof payload.completed !== 'boolean') {
-    throw new HttpError(400, 'Invalid completed value.');
-  }
-
-  if (payload.completed === undefined) {
-    payload.completed = false;
-  }
-
-  const tasks = await readJsonArray(TASKS_FILE_PATH);
-  const newTask = buildTaskRecord(payload);
-
-  tasks.push(newTask);
-  await writeJsonArray(TASKS_FILE_PATH, tasks);
-
-  return newTask;
-}
-
-async function updateTask(taskId, updates) {
-  if (typeof updates.title === 'string' && updates.title.length < 2) {
-    throw new HttpError(400, 'Title is too short.');
-  }
-
-  if (updates.completed !== undefined && typeof updates.completed !== 'boolean') {
-    throw new HttpError(400, 'completed must be boolean');
-  }
-
-  const tasks = await readJsonArray(TASKS_FILE_PATH);
-  const taskIndex = tasks.findIndex((item) => item.id === taskId);
-
-  if (taskIndex === -1) {
-    throw new HttpError(404, 'Task not found.');
-  }
-
-  const existingTask = tasks[taskIndex];
-  const updatedTask = {
-    ...existingTask,
-    ...updates,
-    updatedAt: new Date().toISOString(),
-  };
-
-  tasks[taskIndex] = updatedTask;
-  await writeJsonArray(TASKS_FILE_PATH, tasks);
-
-  return updatedTask;
-}
-
-async function deleteTask(taskId) {
-  const tasks = await readJsonArray(TASKS_FILE_PATH);
-  const taskIndex = tasks.findIndex((item) => item.id === taskId);
-
-  if (taskIndex === -1) {
-    throw new HttpError(404, 'Task not found.');
-  }
-
-  const [removedTask] = tasks.splice(taskIndex, 1);
-  await writeJsonArray(TASKS_FILE_PATH, tasks);
-
-  return removedTask;
-}
-
-module.exports = {
-  getAllTasks,
-  getTaskById,
-  createTask,
-  updateTask,
-  deleteTask,
-};
+module.exports = TasksService;

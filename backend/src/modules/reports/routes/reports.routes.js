@@ -1,7 +1,14 @@
 const express = require('express');
-const router = express.Router();
-const reportsController = require('../controllers/reports.controller');
 
-router.get('/tasks-summary', reportsController.getTasksSummary);
+const asyncHandler = require('../../../middleware/asyncHandler');
 
-module.exports = router;
+/** @param {import('../controllers/reports.controller')} reportsController */
+function createReportsRouter(reportsController) {
+  const reportsRouter = express.Router();
+
+  reportsRouter.get('/tasks-summary', asyncHandler(reportsController.getTasksSummary));
+
+  return reportsRouter;
+}
+
+module.exports = createReportsRouter;

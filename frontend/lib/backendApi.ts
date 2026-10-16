@@ -1,72 +1,80 @@
 import { BACKEND_BASE_URL } from "@/lib/constants";
-import type { ActivityLog, ErrorResponse, Task, TaskResponse, TasksResponse } from "@/types/api";
+import type { ActivityLog, ErrorResponse, Task, TaskResponse, TasksResponse, TasksSummary } from "@/types/api";
 
-function buildBackendUrl(path: string): string {
-  return `${BACKEND_BASE_URL}${path}`;
+/** Error thrown for any failed backend call; keeps the backend's HTTP status so routes can forward it. */
+export class BackendError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number
+  ) {
+    super(message);
+    this.name = "BackendError";
+  }
 }
 
-async function parseError(response: Response): Promise<string> {
-  let fallback = `Request failed with status ${response.status}`;
+async function backendRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response;
 
   try {
-    const body = (await response.json()) as ErrorResponse;
-    return body.error?.message || fallback;
+    response = await fetch(`${BACKEND_BASE_URL}${path}`, {
+      ...init,
+      cache: "no-store",
+    });
   } catch {
-    return fallback;
+    throw new BackendError("Backend service is unavailable.", 503);
   }
+
+  if (!response.ok) {
+    let message = `Backend request failed with status ${response.status}`;
+
+    try {
+      const body = (await response.json()) as Partial<ErrorResponse>;
+      message = body.error?.message || message;
+    } catch {
+      // Non-JSON error body: keep the generic message.
+    }
+
+    throw new BackendError(message, response.status);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  return (await response.json()) as T;
 }
 
 export async function getTasksFromBackend(): Promise<Task[]> {
-  try {
-    const response = await fetch(buildBackendUrl("/tasks"), {
-      cache: "no-store",
-    });
+  const body = await backendRequest<TasksResponse>("/tasks");
+  return body.data;
+}
 
-    if (!response.ok) {
-      throw new Error(await parseError(response));
-    }
-
-    const body = (await response.json()) as TasksResponse;
-    return body.data;
-  } catch (error) {
-    throw new Error(error instanceof Error ? error.message : "Failed to load tasks.");
-  }
+export async function createTaskInBackend(title: string): Promise<Task> {
+  const body = await backendRequest<TaskResponse>("/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  return body.data;
 }
 
 export async function updateTaskInBackend(taskId: string, completed: boolean): Promise<Task> {
-  try {
-    const response = await fetch(buildBackendUrl(`/tasks/${taskId}`), {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ completed }),
-      cache: "no-store",
-    });
+  const body = await backendRequest<TaskResponse>(`/tasks/${encodeURIComponent(taskId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ completed }),
+  });
+  return body.data;
+}
 
-    if (!response.ok) {
-      throw new Error(await parseError(response));
-    }
-
-    const body = (await response.json()) as TaskResponse;
-    return body.data;
-  } catch (error) {
-    throw new Error(error instanceof Error ? error.message : "Failed to update task.");
-  }
+export async function deleteTaskInBackend(taskId: string): Promise<void> {
+  await backendRequest<void>(`/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
 }
 
 export async function getActivityFromBackend(): Promise<ActivityLog[]> {
-  try {
-    const response = await fetch(buildBackendUrl("/activity"), {
-      cache: "no-store",
-    });
+  return backendRequest<ActivityLog[]>("/activity");
+}
 
-    if (!response.ok) {
-      throw new Error(await parseError(response));
-    }
-
-    return (await response.json()) as ActivityLog[];
-  } catch (error) {
-    throw new Error(error instanceof Error ? error.message : "Failed to load activity logs.");
-  }
+export async function getTasksSummaryFromBackend(): Promise<TasksSummary> {
+  return backendRequest<TasksSummary>("/reports/tasks-summary");
 }

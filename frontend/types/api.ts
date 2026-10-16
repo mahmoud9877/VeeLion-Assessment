@@ -13,6 +13,14 @@ export type ActivityLog = {
   when: string;
 };
 
+export type TaskStatus = "todo" | "in-progress" | "done";
+
+export type TasksSummary = {
+  total: number;
+  byStatus: Record<TaskStatus, number>;
+  recentActivityCount: number;
+};
+
 export type TasksResponse = {
   data: Task[];
 };
@@ -22,8 +30,11 @@ export type TaskResponse = {
 };
 
 export type ErrorResponse = {
-  error?: {
-    message?: string;
+  error: {
+    message: string;
+    details?: {
+      unsupportedFields?: string[];
+    };
   };
 };
 

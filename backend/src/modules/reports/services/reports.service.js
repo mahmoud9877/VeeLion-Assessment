@@ -1,32 +1,31 @@
-const path = require('node:path');
-const { readJsonArray } = require('../../../utils/jsonStore');
+class ReportsService {
+  /**
+   * @param {import('../../../utils/jsonFileStore')} tasksStore
+   * @param {import('../../../utils/jsonFileStore')} activitiesStore
+   */
+  constructor(tasksStore, activitiesStore) {
+    this.tasksStore = tasksStore;
+    this.activitiesStore = activitiesStore;
+  }
 
-const TASKS_FILE_PATH = path.join(process.cwd(), 'data', 'tasks.json');
-const ACTIVITY_FILE_PATH = path.join(process.cwd(), 'data', 'activity.json');
+  async getTasksSummary() {
+    const [tasks, activities] = await Promise.all([
+      this.tasksStore.readAll(),
+      this.activitiesStore.readAll(),
+    ]);
 
-async function getTasksSummary() {
-  const [tasks, activities] = await Promise.all([
-    readJsonArray(TASKS_FILE_PATH),
-    readJsonArray(ACTIVITY_FILE_PATH)
-  ]);
+    const done = tasks.filter((task) => task.completed).length;
 
-  const total = tasks.length;
-
-  const byStatus = {
-    todo: tasks.filter(t => !t.completed).length,
-    "in-progress": 0,
-    done: tasks.filter(t => t.completed).length
-  };
-
-  const recentActivityCount = activities.length;
-
-  return {
-    total,
-    byStatus,
-    recentActivityCount
-  };
+    return {
+      total: tasks.length,
+      byStatus: {
+        todo: tasks.length - done,
+        'in-progress': 0,
+        done,
+      },
+      recentActivityCount: activities.length,
+    };
+  }
 }
 
-module.exports = {
-  getTasksSummary
-};
+module.exports = ReportsService;

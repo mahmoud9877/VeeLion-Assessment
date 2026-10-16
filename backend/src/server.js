@@ -1,7 +1,7 @@
-const app = require('./app');
+const createApp = require('./app');
 
 const PORT = process.env.PORT || 4000;
 
-app.listen(PORT, () => {
+createApp().listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
 });

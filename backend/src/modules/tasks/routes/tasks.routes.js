@@ -1,14 +1,30 @@
 const express = require('express');
 
 const asyncHandler = require('../../../middleware/asyncHandler');
-const tasksController = require('../controllers/tasks.controller');
+const validateBody = require('../../../middleware/validateBody');
 
-const tasksRouter = express.Router();
+/**
+ * @param {import('../controllers/tasks.controller')} tasksController
+ * @param {import('../validators/tasks.validator')} tasksValidator
+ */
+function createTasksRouter(tasksController, tasksValidator) {
+  const tasksRouter = express.Router();
 
-tasksRouter.get('/', asyncHandler(tasksController.listTasks));
-tasksRouter.get('/:id', asyncHandler(tasksController.getTask));
-tasksRouter.post('/', asyncHandler(tasksController.createTask));
-tasksRouter.patch('/:id', asyncHandler(tasksController.patchTask));
-tasksRouter.delete('/:id', asyncHandler(tasksController.removeTask));
+  tasksRouter.get('/', asyncHandler(tasksController.listTasks));
+  tasksRouter.get('/:id', asyncHandler(tasksController.getTask));
+  tasksRouter.post(
+    '/',
+    validateBody((body) => tasksValidator.validateCreate(body)),
+    asyncHandler(tasksController.createTask)
+  );
+  tasksRouter.patch(
+    '/:id',
+    validateBody((body) => tasksValidator.validateUpdate(body)),
+    asyncHandler(tasksController.updateTask)
+  );
+  tasksRouter.delete('/:id', asyncHandler(tasksController.deleteTask));
 
-module.exports = tasksRouter;
+  return tasksRouter;
+}
+
+module.exports = createTasksRouter;

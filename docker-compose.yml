@@ -4,7 +4,9 @@ services:
     ports:
       - "4000:4000"
     volumes:
-      - ./backend/data:/app/data
+      # Named volume: Docker seeds it from the image's /app/data (owned by `node`) on first use,
+      # so writes work regardless of the host user's UID. A bind mount would keep host ownership.
+      - backend-data:/app/data
     restart: unless-stopped
 
   frontend:
@@ -17,3 +19,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+volumes:
+  backend-data:

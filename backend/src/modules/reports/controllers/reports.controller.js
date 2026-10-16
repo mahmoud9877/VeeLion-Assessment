@@ -1,11 +1,14 @@
-const reportsService = require('../services/reports.service');
-const asyncHandler = require('../../../middleware/asyncHandler');
+// Handlers are arrow-function fields so they keep `this` when passed to Express as callbacks.
+class ReportsController {
+  /** @param {import('../services/reports.service')} reportsService */
+  constructor(reportsService) {
+    this.reportsService = reportsService;
+  }
 
-const getTasksSummary = asyncHandler(async (req, res) => {
-  const summary = await reportsService.getTasksSummary();
-  res.status(200).json(summary);
-});
+  getTasksSummary = async (req, res) => {
+    const summary = await this.reportsService.getTasksSummary();
+    res.status(200).json(summary);
+  };
+}
 
-module.exports = {
-  getTasksSummary
-};
+module.exports = ReportsController;

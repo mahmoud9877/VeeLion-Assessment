@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { updateTaskInBackend } from "@/lib/backendApi";
+import { errorResponse, handleRouteError } from "@/lib/apiRoute";
+import { deleteTaskInBackend, updateTaskInBackend } from "@/lib/backendApi";
+
+export const dynamic = "force-dynamic";
 
 type RouteParams = {
   params: {
@@ -8,22 +11,31 @@ type RouteParams = {
 };
 
 export async function PATCH(request: Request, { params }: RouteParams) {
+  let payload: { completed?: unknown };
+
   try {
-    const payload = (await request.json()) as { completed?: boolean };
+    payload = await request.json();
+  } catch {
+    return errorResponse("Request body must be valid JSON.", 400);
+  }
 
-    if (typeof payload.completed !== "boolean") {
-      return NextResponse.json(
-        { error: { message: "completed must be boolean" } },
-        { status: 400 }
-      );
-    }
+  if (typeof payload?.completed !== "boolean") {
+    return errorResponse("completed must be boolean", 400);
+  }
 
+  try {
     const task = await updateTaskInBackend(params.id, payload.completed);
     return NextResponse.json({ data: task }, { status: 200 });
   } catch (error) {
-    return NextResponse.json(
-      { error: { message: error instanceof Error ? error.message : "Unable to update task." } },
-      { status: 500 }
-    );
+    return handleRouteError(error, "Unable to update task.");
+  }
+}
+
+export async function DELETE(_request: Request, { params }: RouteParams) {
+  try {
+    await deleteTaskInBackend(params.id);
+    return new NextResponse(null, { status: 204 });
+  } catch (error) {
+    return handleRouteError(error, "Unable to delete task.");
   }
 }

@@ -1,84 +1,115 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ErrorResponse, Task, TaskFilter, TaskResponse, TasksResponse } from "@/types/api";
+import { useCallback, useMemo, useState } from "react";
+import { useApiResource } from "@/hooks/useApiResource";
+import { getErrorMessage, requestJson } from "@/lib/http";
+import type { Task, TaskFilter, TaskResponse, TasksResponse } from "@/types/api";
 
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
+export type TaskCounts = Record<TaskFilter, number>;
 
-  return fallback;
+function sortNewestFirst(tasks: Task[]): Task[] {
+  return [...tasks].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 }
 
-async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-  });
-
-  if (!response.ok) {
-    try {
-      const body = (await response.json()) as ErrorResponse;
-      throw new Error(body.error?.message || `Request failed with ${response.status}`);
-    } catch (error) {
-      throw new Error(getErrorMessage(error, `Request failed with ${response.status}`));
-    }
-  }
-
-  return (await response.json()) as T;
+function withoutId(ids: ReadonlySet<string>, id: string): ReadonlySet<string> {
+  const next = new Set(ids);
+  next.delete(id);
+  return next;
 }
 
 export function useTasks() {
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const {
+    data,
+    setData,
+    loading,
+    error: loadError,
+    hasLoaded,
+    reload,
+  } = useApiResource<TasksResponse>("/api/tasks", "Could not load tasks right now.");
+
   const [filter, setFilter] = useState<TaskFilter>("all");
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>("");
-  const [updatingTaskId, setUpdatingTaskId] = useState<string>("");
+  const [actionError, setActionError] = useState("");
+  const [pendingTaskIds, setPendingTaskIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [creating, setCreating] = useState(false);
 
-  const fetchTasks = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError("");
+  const tasks = useMemo(() => sortNewestFirst(data?.data ?? []), [data]);
 
-      const body = await requestJson<TasksResponse>("/api/tasks", {
-        method: "GET",
-      });
+  const createTask = useCallback(
+    async (title: string): Promise<boolean> => {
+      setCreating(true);
+      setActionError("");
 
-      setTasks(body.data);
-    } catch (error) {
-      setError(getErrorMessage(error, "Could not load tasks right now."));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      try {
+        const body = await requestJson<TaskResponse>("/api/tasks", {
+          method: "POST",
+          body: JSON.stringify({ title }),
+        });
 
-  const updateTaskStatus = useCallback(async (taskId: string, completed: boolean) => {
-    try {
-      setUpdatingTaskId(taskId);
-      setError("");
+        setData((previous) => ({ data: [...(previous?.data ?? []), body.data] }));
+        // A new task is pending, so make sure the current filter does not hide it.
+        setFilter((current) => (current === "completed" ? "all" : current));
+        return true;
+      } catch (error) {
+        setActionError(getErrorMessage(error, "Could not create the task."));
+        return false;
+      } finally {
+        setCreating(false);
+      }
+    },
+    [setData]
+  );
 
-      const body = await requestJson<TaskResponse>(`/api/tasks/${taskId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ completed }),
-      });
+  const updateTaskStatus = useCallback(
+    async (taskId: string, completed: boolean) => {
+      setPendingTaskIds((previous) => new Set(previous).add(taskId));
+      setActionError("");
 
-      setTasks((previous) =>
-        previous.map((task) => (task.id === taskId ? body.data : task))
-      );
-    } catch (error) {
-      setError(getErrorMessage(error, "Could not update task status."));
-    } finally {
-      setUpdatingTaskId("");
-    }
-  }, []);
+      try {
+        const body = await requestJson<TaskResponse>(`/api/tasks/${encodeURIComponent(taskId)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ completed }),
+        });
 
-  useEffect(() => {
-    fetchTasks();
-  }, [fetchTasks]);
+        setData((previous) =>
+          previous
+            ? { data: previous.data.map((task) => (task.id === taskId ? body.data : task)) }
+            : previous
+        );
+      } catch (error) {
+        setActionError(getErrorMessage(error, "Could not update task status."));
+      } finally {
+        setPendingTaskIds((previous) => withoutId(previous, taskId));
+      }
+    },
+    [setData]
+  );
+
+  const deleteTask = useCallback(
+    async (taskId: string) => {
+      setPendingTaskIds((previous) => new Set(previous).add(taskId));
+      setActionError("");
+
+      try {
+        await requestJson<void>(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
+
+        setData((previous) =>
+          previous ? { data: previous.data.filter((task) => task.id !== taskId) } : previous
+        );
+      } catch (error) {
+        setActionError(getErrorMessage(error, "Could not delete the task."));
+      } finally {
+        setPendingTaskIds((previous) => withoutId(previous, taskId));
+      }
+    },
+    [setData]
+  );
+
+  const dismissActionError = useCallback(() => setActionError(""), []);
+
+  const counts = useMemo<TaskCounts>(() => {
+    const completed = tasks.filter((task) => task.completed).length;
+    return { all: tasks.length, completed, pending: tasks.length - completed };
+  }, [tasks]);
 
   const filteredTasks = useMemo(() => {
     if (filter === "completed") {
@@ -93,14 +124,20 @@ export function useTasks() {
   }, [tasks, filter]);
 
   return {
-    tasks,
     filteredTasks,
+    counts,
     filter,
     loading,
-    error,
-    updatingTaskId,
+    hasLoaded,
+    loadError,
+    actionError,
+    pendingTaskIds,
+    creating,
     setFilter,
-    fetchTasks,
+    reload,
+    createTask,
     updateTaskStatus,
+    deleteTask,
+    dismissActionError,
   };
 }
